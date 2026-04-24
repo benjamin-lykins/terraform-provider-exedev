@@ -1,3 +1,5 @@
+//
+
 package provider
 
 import (
@@ -8,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/benjamin-lykins/terraform-provider-exedev/internal/client"
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -463,24 +464,6 @@ func applyVMResponse(m *vmResourceModel, vm vmAPIResponse) {
 		m.Region = types.StringValue(vm.Region)
 	} else if m.Region.IsNull() || m.Region.IsUnknown() {
 		m.Region = types.StringValue("")
-	}
-
-	// Only overwrite image from the API if non-empty.
-	if vm.Image != "" {
-		m.Image = types.StringValue(vm.Image)
-	}
-	// Disk: convert bytes to a GB string if we have it, otherwise keep user value.
-	if vm.DiskCapacityBytes > 0 {
-		gb := vm.DiskCapacityBytes / 1073741824
-		m.Disk = types.StringValue(fmt.Sprintf("%dGB", gb))
-	}
-
-	// Ensure computed collections are set to non-null if not already configured.
-	if m.Env.IsNull() || m.Env.IsUnknown() {
-		m.Env = types.MapValueMust(types.StringType, map[string]attr.Value{})
-	}
-	if m.Integrations.IsNull() || m.Integrations.IsUnknown() {
-		m.Integrations = types.ListValueMust(types.StringType, []attr.Value{})
 	}
 }
 
