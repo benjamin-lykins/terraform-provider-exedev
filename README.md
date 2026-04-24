@@ -1,6 +1,6 @@
 # terraform-provider-exedev
 
-> **Warning:** This provider was developed with the assistance of AI and has not been fully tested or reviewed. It should **not** be used in production environments without thorough review and validation.
+> **Warning:** This provider was developed with the assistance of AI and has not been fully tested or reviewed. This was intended as a side thing to see how quickly a minimally viable provider could be spun up. 
 
 A Terraform provider for managing [exe.dev](https://exe.dev) resources via the [HTTPS API](https://exe.dev/docs/https-api).
 
