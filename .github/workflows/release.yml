@@ -31,14 +31,6 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
-      - name: Verify imported GPG secret key
-        run: |
-          gpg --batch --list-secret-keys --keyid-format LONG
-          gpg --batch --list-secret-keys "${{ steps.import_gpg.outputs.fingerprint }}" >/dev/null 2>&1 || {
-            echo "::error::No secret key found for fingerprint ${{ steps.import_gpg.outputs.fingerprint }}"
-            echo "::error::Set GPG_PRIVATE_KEY to the ASCII-armored private key from: gpg --armor --export-secret-keys <KEY_ID>"
-            exit 1
-          }
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
         with:
@@ -47,4 +39,3 @@ jobs:
           # GitHub sets the GITHUB_TOKEN secret automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
-          GPG_PASSPHRASE: ${{ secrets.PASSPHRASE }}
