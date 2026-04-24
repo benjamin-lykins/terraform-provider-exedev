@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -113,7 +112,7 @@ func (d *vmDataSource) Read(ctx context.Context, req datasource.ReadRequest, res
 	}
 
 	name := config.Name.ValueString()
-	cmd := fmt.Sprintf("ls --l --json %s", client.ShellQuote(name))
+	cmd := "ls --json"
 	tflog.Debug(ctx, "Reading VM (data source)", map[string]any{"cmd": cmd})
 
 	body, err := d.client.Exec(cmd)
@@ -129,36 +128,33 @@ func (d *vmDataSource) Read(ctx context.Context, req datasource.ReadRequest, res
 
 	body = trimBOM(body)
 
-	// Parse response - try single object, then array.
+	vms, parseErr := parseVMList(body)
+	if parseErr != nil {
+		resp.Diagnostics.AddError("Parsing VM response", fmt.Sprintf("parse error: %v\nBody: %s", parseErr, body))
+		return
+	}
+
 	var vm vmAPIResponse
-	if err := json.Unmarshal(body, &vm); err != nil || vm.Name == "" {
-		var list []vmAPIResponse
-		if err2 := json.Unmarshal(body, &list); err2 != nil {
-			resp.Diagnostics.AddError("Parsing VM response", fmt.Sprintf("parse error: %v\nBody: %s", err, body))
-			return
-		}
-		for _, v := range list {
-			if v.Name == name {
-				vm = v
-				break
-			}
+	for _, v := range vms {
+		if v.effectiveName() == name {
+			vm = v
+			break
 		}
 	}
 
-	if vm.Name == "" {
+	if vm.effectiveName() == "" {
 		resp.Diagnostics.AddError("VM not found", fmt.Sprintf("No VM named %q found in response", name))
 		return
 	}
 
-	config.ID = types.StringValue(vm.Name)
-	config.Name = types.StringValue(vm.Name)
-	if vm.Hostname != "" {
-		config.Hostname = types.StringValue(vm.Hostname)
-	} else {
-		config.Hostname = types.StringValue(vm.Name + ".exe.xyz")
-	}
+	config.ID = types.StringValue(vm.effectiveName())
+	config.Name = types.StringValue(vm.effectiveName())
+	config.Hostname = types.StringValue(vm.effectiveHostname())
 	config.Image = types.StringValue(vm.Image)
-	config.Disk = types.StringValue(vm.Disk)
+	if vm.DiskCapacityBytes > 0 {
+		gb := vm.DiskCapacityBytes / 1073741824
+		config.Disk = types.StringValue(fmt.Sprintf("%dGB", gb))
+	}
 	config.Status = types.StringValue(vm.Status)
 	config.Region = types.StringValue(vm.Region)
 

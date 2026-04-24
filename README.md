@@ -13,13 +13,15 @@ The provider authenticates using a Bearer token signed with your SSH private key
 
 ### Generate a token
 
+The provider requires a token with permissions to run `ls`, `new`, `rm`, `rename`, `resize`, `ssh-key list`, `ssh-key add`, `ssh-key remove`, and `ssh-key rename`. The default `exe0` token only includes a limited set — you must explicitly specify `cmds`:
+
 ```bash
 # Add a dedicated API key (optional but recommended for revocability)
 ssh-keygen -t ed25519 -C terraform -f ~/.ssh/exe_dev_terraform
 cat ~/.ssh/exe_dev_terraform.pub | ssh exe.dev ssh-key add
 
-# Generate the token
-export PERMISSIONS='{"cmds":["ls","new","rm","rename","resize","stat","ssh-key list","ssh-key add","ssh-key remove","ssh-key rename"]}'
+# Generate the token with required permissions
+export PERMISSIONS='{"cmds":["ls","new","rm","rename","resize","ssh-key list","ssh-key add","ssh-key remove","ssh-key rename"]}'
 export PAYLOAD=$(printf '%s' "$PERMISSIONS" | base64 | tr -d '\n=' | tr '+/' '-_')
 export SIG=$(printf '%s' "$PERMISSIONS" | ssh-keygen -Y sign -f ~/.ssh/exe_dev_terraform -n v0@exe.dev)
 export SIGBLOB=$(echo "$SIG" | sed '1d;$d' | tr -d '\n=' | tr '+/' '-_')

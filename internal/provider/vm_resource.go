@@ -54,14 +54,47 @@ type vmResourceModel struct {
 }
 
 // vmAPIResponse is used to decode the JSON returned by exe.dev commands.
-// Fields use flexible types to tolerate different response shapes.
+// Fields match the actual JSON keys returned by the ls --json command.
 type vmAPIResponse struct {
+	// ls --json returns vm_name; new --json may return name
+	VMName   string `json:"vm_name"`
 	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
+	HTTPSURL string `json:"https_url"`
 	Image    string `json:"image"`
-	Disk     string `json:"disk"`
-	Status   string `json:"status"`
-	Region   string `json:"region"`
+	// disk_capacity_bytes is returned as an integer number of bytes
+	DiskCapacityBytes int64  `json:"disk_capacity_bytes"`
+	Status            string `json:"status"`
+	Region            string `json:"region"`
+	SSHDest           string `json:"ssh_dest"`
+}
+
+// effectiveName returns the VM name from whichever field is populated.
+func (v vmAPIResponse) effectiveName() string {
+	if v.VMName != "" {
+		return v.VMName
+	}
+	return v.Name
+}
+
+// effectiveHostname returns the public hostname from the API response.
+func (v vmAPIResponse) effectiveHostname() string {
+	if v.HTTPSURL != "" {
+		// strip the scheme to get just the hostname
+		h := v.HTTPSURL
+		if len(h) > 8 && h[:8] == "https://" {
+			h = h[8:]
+		}
+		return h
+	}
+	if v.SSHDest != "" {
+		return v.SSHDest
+	}
+	return v.effectiveName() + ".exe.xyz"
+}
+
+// vmListResponse is the envelope returned by ls --json.
+type vmListResponse struct {
+	VMs []vmAPIResponse `json:"vms"`
 }
 
 // vmResource is the concrete resource implementation.
@@ -199,18 +232,25 @@ func (r *vmResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	var vm vmAPIResponse
-	if err := json.Unmarshal(body, &vm); err != nil {
-		resp.Diagnostics.AddError("Parsing VM create response", fmt.Sprintf("%s\nBody: %s", err, body))
+	vms, err := parseVMList(trimBOM(body))
+	if err != nil || len(vms) == 0 {
+		resp.Diagnostics.AddError("Parsing VM create response", fmt.Sprintf("could not parse response\nBody: %s", body))
 		return
 	}
+	vm := vms[0]
 
-	if vm.Name == "" {
+	if vm.effectiveName() == "" {
 		resp.Diagnostics.AddError("Parsing VM create response", "VM name not found in response: "+string(body))
 		return
 	}
 
 	applyVMResponse(&plan, vm)
+
+	// Do a Read to populate any fields the `new` response omits (status, region, etc.).
+	if full, found, readErr := r.readVM(ctx, vm.effectiveName()); readErr == nil && found {
+		applyVMResponse(&plan, full)
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -316,7 +356,7 @@ func (r *vmResource) ImportState(ctx context.Context, req resource.ImportStateRe
 // It returns (vm, true, nil) if found, (zero, false, nil) if not found,
 // or (zero, false, err) on API error.
 func (r *vmResource) readVM(ctx context.Context, name string) (vmAPIResponse, bool, error) {
-	cmd := fmt.Sprintf("ls --l --json %s", client.ShellQuote(name))
+	cmd := "ls --json"
 	tflog.Debug(ctx, "Reading VM", map[string]any{"cmd": cmd})
 
 	body, err := r.client.Exec(cmd)
@@ -328,28 +368,39 @@ func (r *vmResource) readVM(ctx context.Context, name string) (vmAPIResponse, bo
 		return vmAPIResponse{}, false, err
 	}
 
-	// ls --l --json may return a single object or an array.
 	body = trimBOM(body)
 
-	// Try single object first.
-	var single vmAPIResponse
-	if err := json.Unmarshal(body, &single); err == nil && single.Name != "" {
-		return single, true, nil
+	vms, err := parseVMList(body)
+	if err != nil {
+		return vmAPIResponse{}, false, fmt.Errorf("parsing ls response: %w", err)
 	}
 
-	// Try array.
+	for _, vm := range vms {
+		if vm.effectiveName() == name {
+			return vm, true, nil
+		}
+	}
+	return vmAPIResponse{}, false, nil
+}
+
+// parseVMList parses the various shapes the ls --json response may take.
+func parseVMList(body []byte) ([]vmAPIResponse, error) {
+	// Primary shape: {"vms": [...]}
+	var envelope vmListResponse
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.VMs != nil {
+		return envelope.VMs, nil
+	}
+	// Fallback: flat array
 	var list []vmAPIResponse
 	if err := json.Unmarshal(body, &list); err == nil {
-		for _, vm := range list {
-			if vm.Name == name {
-				return vm, true, nil
-			}
-		}
-		// Not found in list.
-		return vmAPIResponse{}, false, nil
+		return list, nil
 	}
-
-	return vmAPIResponse{}, false, fmt.Errorf("unexpected response from ls: %s", body)
+	// Fallback: single object
+	var single vmAPIResponse
+	if err := json.Unmarshal(body, &single); err == nil && single.effectiveName() != "" {
+		return []vmAPIResponse{single}, nil
+	}
+	return nil, fmt.Errorf("unrecognised response shape: %s", body)
 }
 
 // buildNewCommand constructs the `new` CLI command string from the plan.
@@ -399,30 +450,29 @@ func buildNewCommand(plan vmResourceModel) (string, error) {
 // applyVMResponse copies API response fields into the model, leaving
 // user-managed fields (image, disk, env, etc.) unchanged.
 func applyVMResponse(m *vmResourceModel, vm vmAPIResponse) {
-	m.ID = types.StringValue(vm.Name)
-	m.Name = types.StringValue(vm.Name)
-
-	if vm.Hostname != "" {
-		m.Hostname = types.StringValue(vm.Hostname)
-	} else {
-		// Derive hostname from name if the API doesn't return it.
-		m.Hostname = types.StringValue(vm.Name + ".exe.xyz")
-	}
-
+	name := vm.effectiveName()
+	m.ID = types.StringValue(name)
+	m.Name = types.StringValue(name)
+	m.Hostname = types.StringValue(vm.effectiveHostname())
 	if vm.Status != "" {
 		m.Status = types.StringValue(vm.Status)
+	} else if m.Status.IsNull() || m.Status.IsUnknown() {
+		m.Status = types.StringValue("")
 	}
 	if vm.Region != "" {
 		m.Region = types.StringValue(vm.Region)
+	} else if m.Region.IsNull() || m.Region.IsUnknown() {
+		m.Region = types.StringValue("")
 	}
 
-	// Only overwrite disk/image from the API if they are non-empty,
-	// to avoid clobbering user-specified values with empty strings.
-	if vm.Disk != "" {
-		m.Disk = types.StringValue(vm.Disk)
-	}
+	// Only overwrite image from the API if non-empty.
 	if vm.Image != "" {
 		m.Image = types.StringValue(vm.Image)
+	}
+	// Disk: convert bytes to a GB string if we have it, otherwise keep user value.
+	if vm.DiskCapacityBytes > 0 {
+		gb := vm.DiskCapacityBytes / 1073741824
+		m.Disk = types.StringValue(fmt.Sprintf("%dGB", gb))
 	}
 
 	// Ensure computed collections are set to non-null if not already configured.
