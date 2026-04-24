@@ -1,0 +1,30 @@
+# Binaries
+terraform-provider-exedev
+*.exe
+
+# Build output
+dist/
+
+# Go
+*.test
+*.out
+vendor/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# GoReleaser
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
