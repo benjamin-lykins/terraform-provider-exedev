@@ -15,7 +15,7 @@ The provider authenticates using a Bearer token signed with your SSH private key
 
 ### Generate a token
 
-The provider requires a token with permissions to run `ls`, `new`, `rm`, `rename`, `resize`, `ssh-key list`, `ssh-key add`, `ssh-key remove`, and `ssh-key rename`. The default `exe0` token only includes a limited set — you must explicitly specify `cmds`:
+The provider requires a token with permissions to run `ls`, `new`, `rm`, `rename`, `resize`, `ssh-key list`, `ssh-key add`, `ssh-key remove`, `ssh-key rename`, `domain add`, `domain ls`, and `domain rm`. The default `exe0` token only includes a limited set — you must explicitly specify `cmds`:
 
 ```bash
 # Add a dedicated API key (optional but recommended for revocability)
@@ -23,7 +23,7 @@ ssh-keygen -t ed25519 -C terraform -f ~/.ssh/exe_dev_terraform
 cat ~/.ssh/exe_dev_terraform.pub | ssh exe.dev ssh-key add
 
 # Generate the token with required permissions
-export PERMISSIONS='{"cmds":["ls","new","rm","rename","resize","ssh-key list","ssh-key add","ssh-key remove","ssh-key rename"]}'
+export PERMISSIONS='{"cmds":["ls","new","rm","rename","resize","ssh-key list","ssh-key add","ssh-key remove","ssh-key rename","domain add","domain ls","domain rm"]}'
 export PAYLOAD=$(printf '%s' "$PERMISSIONS" | base64 | tr -d '\n=' | tr '+/' '-_')
 export SIG=$(printf '%s' "$PERMISSIONS" | ssh-keygen -Y sign -f ~/.ssh/exe_dev_terraform -n v0@exe.dev)
 export SIGBLOB=$(echo "$SIG" | sed '1d;$d' | tr -d '\n=' | tr '+/' '-_')
@@ -121,6 +121,28 @@ resource "exedev_ssh_key" "ci" {
 | `id` | Key name. |
 | `fingerprint` | SHA256 fingerprint of the key. |
 
+### `exedev_domain`
+
+Registers a custom domain for an exe.dev VM. Create the DNS record first; exe.dev verifies DNS during `domain add`. Cloudflare records must stay DNS-only, not proxied.
+
+```hcl
+resource "exedev_domain" "web" {
+  vm_name = exedev_vm.web.name
+  domain  = "app.example.com"
+}
+```
+
+**Arguments:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `vm_name` | string | Yes | exe.dev VM name that should serve the custom domain. Forces replacement if changed. |
+| `domain` | string | Yes | Custom domain to register with exe.dev. Forces replacement if changed. |
+
+**Computed attributes:**
+| Name | Description |
+|------|-------------|
+| `id` | Stable identifier in `vm_name/domain` form. |
+
 ## Data Sources
 
 ### `exedev_vm`
@@ -139,11 +161,12 @@ output "existing_hostname" {
 
 ## Import
 
-VMs and SSH keys can be imported by name:
+VMs and SSH keys can be imported by name; domains use `vm_name/domain`:
 
 ```bash
 terraform import exedev_vm.web my-web-server
 terraform import exedev_ssh_key.ci ci-bot
+terraform import exedev_domain.web my-web-server/app.example.com
 ```
 
 ## Building from source
