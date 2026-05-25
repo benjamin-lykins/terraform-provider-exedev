@@ -78,6 +78,7 @@ func (p *ExeDevProvider) Resources(_ context.Context) []func() resource.Resource
 	return []func() resource.Resource{
 		NewVMResource,
 		NewSSHKeyResource,
+		NewDomainResource,
 	}
 }
 
